@@ -3,15 +3,30 @@ import conf
 import random
 import shelve
 from telebot import types
+import flask
 
-bot = telebot.TeleBot(conf.TOKEN)
+WEBHOOK_URL_BASE = "https://{}:{}".format(conf.WEBHOOK_HOST, conf.WEBHOOK_PORT)
+WEBHOOK_URL_PATH = "/{}/".format(conf.TOKEN)
+
+bot = telebot.TeleBot(conf.TOKEN, threaded = False)
+bot.remove_webhook()
+bot.set_webhook(url=WEBHOOK_URL_BASE+WEBHOOK_URL_PATH)
+
+app = flask.Flask(__name__)
+
 
 with open('questions.csv', 'r', encoding='utf-8') as f:
     questions = {}  
     for line in f:
-        num, text = line.strip().split(';')[0], line[2:len(line)-1]
+        num, text = num, text = line.strip().split(';')[0], line[len(line.strip().split(';')[0])+1:len(line)-1]
         questions[num] = text
-keys = list(questions.keys())  
+keys = list(questions.keys())
+
+docs = ['https://docs.google.com/forms/d/e/1FAIpQLSePthyfJADge--1UZFNStTufL9sNWoImt-vsmifNwcSB_aZVw/viewform?c=0&w=1',
+        'https://docs.google.com/forms/d/e/1FAIpQLSc-SUfdl4fOlqF2ueecLa06YkgQ3rui-0WjlFAV1muLb2PVyw/viewform?c=0&w=1',
+        'https://docs.google.com/forms/d/e/1FAIpQLSfmbBP5jRuSwc0agCK3zanI95MxZaMGl8mmVPf624jHigA9xw/viewform?c=0&w=1',
+        'https://docs.google.com/forms/d/e/1FAIpQLSdFo_EcG9Y4pvGilIFkh8_ETjKa2IfSI4y6xaUpvXnUy388Lg/viewform?c=0&w=1',
+        'https://docs.google.com/forms/d/e/1FAIpQLSeDtksBo6t0TttUtzqEyo_aKbtcyG-aPqT4ILPaLS01PF4WxA/viewform?c=0&w=1']
 
 def set_user_question(chat_id, num, i):
     with shelve.open('data.db') as storage:
@@ -36,10 +51,19 @@ btn1 = types.KeyboardButton('да')
 btn2 = types.KeyboardButton('нет')
 keyboard2.add(btn1, btn2)
 
+@bot.message_handler(commands=['help'])
+def some_instructions(message):
+    bot.send_message(message.chat.id, 'А вы знали, что если вы напишите мне /docs, то перед вами откроется великолепная возмоность поучаствовать в заполнении интереснейшего гугл-дока?')
+    bot.send_message(message.chat.id, 'Выбрав да или нет, можно продолжить оценивать предложения или расстаться со мной навсегда :с. Ну или только на время, потому что написав мне "да", вы всегда сможете продолжить')
+    bot.send_message(message.chat.id, 'Я не боюсь непонятных сообщений и смайликов. Я боюсь лишних + и -, а также преждевременных да или нет. Пожалуйста, следуйте чёткому правилу: одно предложение - одна оценка, т.е. один знак + или -!')
+                     
+
+
 @bot.message_handler(commands=['start'])
 def send_first_question(message):
     question_num = random.choice(keys)
     q = questions[question_num].split(';')
+    bot.send_message(message.chat.id, 'Доброго времени суток! Я буду присылать Вам предложения, а вы будете с помощью кнопок "+" и "-" оценивать, грамматичны они или нет. Каждые несколько предложений составляют блок из одного вопроса. \nПожалуйста, не используйте никакие функции и не пишите "да" и "нет" во время ответа на один вопрос, это может меня сломать :с \n После того, как вы ответите на первый вопрос, вам будут предложены другие опции, но пока что я очень прошу вас нажимать на кнопки + или -. Выберите +, если предложение кажется вам правильным и -, если предложение кажется вам неправильным: ')
     bot.send_message(message.chat.id, q[0], reply_markup=keyboard1)
     set_user_question(message.chat.id, question_num, 0)
         
@@ -57,7 +81,7 @@ def get_one_question(message):
         elif i>=len(q)-1:
             with open('results.csv', 'a', encoding = 'utf-8') as results:
                 results.write(question_num[0]+'\n')
-            bot.send_message(message.chat.id, 'Вы ответили на вопрос! Хотите ещё?', reply_markup=keyboard2)
+            bot.send_message(message.chat.id, 'Вы ответили на вопрос! Чтобы посмотреть статистику ответов по этому вопросу, напишите мне /stat. \n Если вы хотите продолжить оценивать предложения, нажмите кнопку "да".', reply_markup=keyboard2)
     else:
         bot.send_message(message.chat.id, 'Что-то пошло не так... /start')
         
@@ -72,7 +96,7 @@ def get_other_questions(message):
             bot.send_message(message.chat.id, q[0], reply_markup=keyboard1)
             set_user_question(message.chat.id, new_question_num, 0)
         elif len(keys) == 1:
-            bot.send_message(message.chat.id, 'Кажется, Вы ответили на все вопросы... Быть может, вы хотите ещё?', reply_markup=keyboard2)
+            bot.send_message(message.chat.id, 'Кажется, Вы ответили на все вопросы... Быть может, вы хотите заполнить гугл-док с похожими вопросами? Тогда наберите /docs', reply_markup=keyboard2)
     else:
         bot.send_message(message.chat.id, 'Что-то пошло не так... /start')
 
@@ -91,8 +115,11 @@ def show_me_statistics(message):
             for j in range (len(A[0])):
                 p = 0
                 for el in A:
-                    if el[j] == '+':
-                        p+=1
+                    try:
+                        if el[j] == '+':
+                            p+=1
+                    except:
+                        bot.send_message(message.chat.id, 'Что-то пошло не так... /start')
                 stats.append((p/n)*100)
         q = questions[question_num[0]].split(';')
         stat_string = ''
@@ -102,19 +129,39 @@ def show_me_statistics(message):
     else:
         bot.send_message(message.chat.id, 'Что-то пошло не так... /start')
 
-        
+@bot.message_handler(commands=['docs'])
+def send_doc(message):
+    if docs != []:
+        link = docs.pop()
+        bot.send_message(message.chat.id, link)
+    else:
+        bot.send_message(message.chat.id, 'Похоже, мне нечего больше вам предложить. Большое спасибо за помощь науке!')
+       
                           
 
 @bot.message_handler(regexp='нет')
 def stop_it(message):
-    bot.send_message(message.chat.id, 'Очень жаль... Но спасибо вам, что уделили время этому опросу!) Если захотите продолжить, наберите "Да"')
+    bot.send_message(message.chat.id, 'Что ж... На нет и суда нет) Спасибо вам, что уделили время оцениванию предложений!) Если захотите продолжить, я буду здесь. Просто нажмите кнопку "да"')
     
 @bot.message_handler(func=lambda m: True)
 def what(message):
-    bot.send_message(message.chat.id, 'Боюсь, я могу отвечать только на +, -, да и нет. Не пишите мне других сообщений! Если что-то непонятно, воспользуйтесь командой /help')
+    bot.send_message(message.chat.id, 'Боюсь, я умею отвечать только на +, -, да и нет. Если что-то непонятно, воспользуйтесь командой /help')
 
     
 
-if __name__ == '__main__':
-    bot.polling(none_stop=True)
+@app.route('/', methods=['GET', 'HEAD'])
+def index():
+    return 'ok'
+
+
+@app.route(WEBHOOK_URL_PATH, methods=['POST'])
+def webhook():
+    if flask.request.headers.get('content-type') == 'application/json':
+        json_string = flask.request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return ''
+    else:
+        flask.abort(403)
+
 
